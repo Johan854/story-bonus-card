@@ -5,7 +5,9 @@ Carte Home Assistant des **sphères vocales** (assistant ESPHome), en deux ongle
 - **Histoires** : chaque **A+** gagné dans Pronote rapporte une histoire bonus où l'enfant invente tout. Compteur d'histoires, derniers A+ gagnés.
 - **Révisions** : quêtes de révisions avec **Sire Gaspard**, par matière ou ciblées sur les **points faibles Pronote** (compétences fragiles ou insuffisantes récentes).
 
-Tout se lance **sur la sphère (à voix haute)** ou **au clavier**, directement dans la carte. Style verre, thème clair/sombre automatique, éditeur visuel, textes en français.
+- **Défis** (pour un enfant sans Pronote) : défis notés par la carte elle-même (tables, additions, soustractions, conjugaison), réponses en 4 choix. 8/10 = 1 histoire bonus, avec un plafond par jour. Aucune IA dans la correction : impossible à tricher.
+
+Histoires et révisions se lancent **sur la sphère (à voix haute)** ou **au clavier**, directement dans la carte. Style verre, thème clair/sombre automatique, éditeur visuel, textes en français.
 
 ![Aperçu](apercu.png)
 
@@ -59,6 +61,37 @@ image: /local/image/pixel.png              # facultatif
 
 ## Révisions
 Choisis une matière (Mes points faibles, Français, Maths, Anglais, Sciences, Histoire-géo) puis **Sur la sphère** ou **Au clavier**. « Mes points faibles » s'appuie sur les compétences « fragile » ou « insuffisante » de Pronote des derniers jours, listées sous les boutons. Au clavier, « J'ai fini (bilan) » demande à Sire Gaspard le bilan des pièces d'armure et l'adoubement.
+
+## Défis notés
+Avec `defis: true`, l'onglet **Défis** propose 10 questions à choix (niveau `defi_level` : CE1, CE2, CM1, CM2) : tables, additions, soustractions, conjugaison (présent, futur, imparfait selon le niveau) ou mélange. À la fin, si l'enfant a au moins `defi_pass` bonnes réponses, la carte appelle `defi_script` avec `score`, `total` et `type`. Le script vérifie le score et le plafond du jour, puis ajoute l'histoire.
+
+![Défis](apercu-defis.png)
+
+```yaml
+type: custom:story-bonus-card
+counter: counter.shaun_histoires_bonus
+script: script.shaun_histoire_bonus
+satellite: assist_satellite.xiaozhi_ball_satellite_assist
+agent: conversation.prof_ce2
+name: Shaun
+age: 8
+revisions: false
+defis: true
+defi_script: script.shaun_defi_reussi
+defi_daily: counter.shaun_defis_du_jour
+defi_daily_max: 3
+defi_level: CE2
+```
+
+| Option | Description |
+|---|---|
+| `defis` | Affiche l'onglet Défis |
+| `defi_script` | Script de récompense (reçoit `score`, `total`, `type`) |
+| `defi_daily` | Compteur des défis récompensés aujourd'hui |
+| `defi_daily_max` | Histoires gagnables par jour (3 par défaut) |
+| `defi_level` | `CE1`, `CE2`, `CM1`, `CM2` |
+| `defi_questions` / `defi_pass` | Nombre de questions (10) et bonnes réponses nécessaires (8) |
+| `defi_image` | Personnage affiché sur l'onglet |
 
 ## Mode clavier
 Avec `agent` renseigné, le bouton propose **Sur la sphère** ou **Au clavier**. Au clavier, l'histoire se joue dans la carte comme une discussion : le conteur pose ses 3 questions, raconte, et propose des choix numérotés (boutons « Choix 1, 2, 3 » ou réponse libre). Le script est appelé avec `clavier: true` pour décompter l'histoire sans rien lancer sur la sphère.

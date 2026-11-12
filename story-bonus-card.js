@@ -8,7 +8,7 @@
  * Style verre, thème clair/sombre automatique, éditeur visuel, textes en français.
  */
 
-const CARD_VERSION = "1.0.1";
+const CARD_VERSION = "1.1.0";
 
 /* === NUANCE COMMUNE v2 (cartes Johan854) ===
  * Bloc identique dans toutes les cartes. Options : nuance, nuance_perso, intensite.
@@ -60,6 +60,14 @@ const DEFAULTS = {
   niveau: "6e",           // niveau scolaire
   revision_days: 30,      // points faibles Pronote sur N jours
   default_tab: "histoires",
+  defis: false,           // onglet Défis notés par la carte (récompense sans Pronote)
+  defi_script: "",        // script appelé après un défi réussi (ex. script.shaun_defi_reussi)
+  defi_daily: "",         // compteur des défis récompensés aujourd'hui (ex. counter.shaun_defis_du_jour)
+  defi_daily_max: 3,      // histoires gagnables par jour
+  defi_level: "CE2",      // CE1, CE2, CM1, CM2
+  defi_questions: 10,
+  defi_pass: 8,           // bonnes réponses nécessaires
+  defi_image: "",         // personnage des défis (ex. image de Max et Pico)
   theme: "auto", nuance: "theme", intensite: 1,
 };
 
@@ -81,7 +89,7 @@ const toDate = (v) => {
   const s = String(v); const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T12:00:00") : new Date(s.replace(" ", "T"));
   return isNaN(d) ? null : d;
 };
-const STORY_PROMPT = (name, age) => `Consigne (ne la répète pas) : mode histoire, histoire bonus pour ${name || "l'enfant"}, ${age} ans, gagnée grâce à un A+ à l'école. `
+const STORY_PROMPT = (name, age) => `Consigne (ne la répète pas) : mode histoire, histoire bonus pour ${name || "l'enfant"}, ${age} ans, gagnée grâce à ses efforts à l'école. `
   + "C'est lui qui invente tout : le héros, ses pouvoirs, le monde, les règles et les méchants. "
   + "Commence par lui poser 3 questions courtes, une à la fois, pour construire l'univers (héros, monde, objectif). "
   + "Ensuite raconte l'histoire en au moins 5 étapes courtes (un paragraphe chacune), en reprenant fidèlement ses idées. "
@@ -96,6 +104,61 @@ const REV_PROMPT = (name, niveau, mat, weak) => `Consigne (ne la répète pas) :
   + (weak ? `D'après Pronote, il doit retravailler : ${weak}. ` + (mat === "Mes points faibles" ? "Base toute la quête sur ces points. " : "Dans la matière choisie, commence par les points de cette liste qui la concernent. ")
     : (mat === "Mes points faibles" ? "Pronote ne signale aucun point faible récent : félicite-le, puis fais une quête de révisions variée. " : ""))
   + "Il écrit au clavier : réponds par écrit, phrases courtes. Annonce la quête en une phrase puis pose la première question.";
+/* ---------- Défis notés par la carte (aucune IA : impossible à tricher) ---------- */
+const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const DEFI_TYPES = [["melange", "Mélange", "mdi:shuffle-variant"], ["tables", "Tables", "mdi:close"], ["additions", "Additions", "mdi:plus"],
+  ["soustractions", "Soustractions", "mdi:minus"], ["conjugaison", "Conjugaison", "mdi:alphabetical-variant"]];
+const LVL = (l) => ({ CP: 0, CE1: 1, CE2: 2, CM1: 3, CM2: 4 }[String(l || "CE2").toUpperCase()] ?? 2);
+const numChoices = (ans, extra) => {
+  const set = new Set();
+  [...extra, ans + 1, ans - 1, ans + 10, ans - 10, ans + 2].forEach((v) => { if (v > 0 && v !== ans && set.size < 3) set.add(v); });
+  while (set.size < 3) { const v = ans + rnd(-20, 20); if (v > 0 && v !== ans) set.add(v); }
+  return shuffle([ans, ...set]).map(String);
+};
+const PRON = ["je", "tu", "il", "nous", "vous", "ils"];
+const PRES = {
+  "être": ["suis", "es", "est", "sommes", "êtes", "sont"], "avoir": ["ai", "as", "a", "avons", "avez", "ont"],
+  "aller": ["vais", "vas", "va", "allons", "allez", "vont"], "faire": ["fais", "fais", "fait", "faisons", "faites", "font"],
+  "dire": ["dis", "dis", "dit", "disons", "dites", "disent"], "venir": ["viens", "viens", "vient", "venons", "venez", "viennent"],
+  "prendre": ["prends", "prends", "prend", "prenons", "prenez", "prennent"], "pouvoir": ["peux", "peux", "peut", "pouvons", "pouvez", "peuvent"],
+  "voir": ["vois", "vois", "voit", "voyons", "voyez", "voient"], "vouloir": ["veux", "veux", "veut", "voulons", "voulez", "veulent"],
+  "finir": ["finis", "finis", "finit", "finissons", "finissez", "finissent"], "manger": ["mange", "manges", "mange", "mangeons", "mangez", "mangent"],
+};
+const ER = ["chanter", "jouer", "danser", "regarder", "parler", "aimer", "marcher", "dessiner"];
+const FUT_STEM = { "être": "ser", "avoir": "aur", "aller": "ir", "faire": "fer", "dire": "dir", "venir": "viendr", "prendre": "prendr",
+  "pouvoir": "pourr", "voir": "verr", "vouloir": "voudr", "finir": "finir", "manger": "manger" };
+const forms = (verb, tense) => {
+  const pres = PRES[verb] || ["e", "es", "e", "ons", "ez", "ent"].map((e) => verb.slice(0, -2) + e);
+  if (tense === "présent") return pres;
+  if (tense === "futur") { const st = FUT_STEM[verb] || verb; return ["ai", "as", "a", "ons", "ez", "ont"].map((e) => st + e); }
+  const st = verb === "être" ? "ét" : pres[3].slice(0, -3);
+  return ["ais", "ais", "ait", "ions", "iez", "aient"].map((e) => (/^i/.test(e) && /ge$/.test(st) ? st.slice(0, -1) : st) + e);
+};
+const makeQ = (type, level) => {
+  const L = LVL(level);
+  const t = type === "melange" ? DEFI_TYPES[rnd(1, DEFI_TYPES.length - 1)][0] : type;
+  if (t === "tables") {
+    const a = rnd(2, [5, 5, 9, 10, 12][L]), b = rnd(2, [5, 5, 9, 10, 12][L]), ans = a * b;
+    return { q: `${a} × ${b} = ?`, ans: String(ans), choices: numChoices(ans, [a * (b + 1), a * (b - 1), (a + 1) * b, (a - 1) * b]) };
+  }
+  if (t === "additions") {
+    const max = [20, 100, 1000, 10000, 10000][L], a = rnd(Math.floor(max / 10), Math.floor(max / 2)), b = rnd(Math.floor(max / 20) + 1, Math.floor(max / 2) - 1), ans = a + b;
+    return { q: `${a} + ${b} = ?`, ans: String(ans), choices: numChoices(ans, [ans + 100, ans - 100]) };
+  }
+  if (t === "soustractions") {
+    const max = [20, 100, 1000, 10000, 10000][L], a = rnd(Math.floor(max / 5), max - 1), b = rnd(1, a - 1), ans = a - b;
+    return { q: `${a} − ${b} = ?`, ans: String(ans), choices: numChoices(ans, [ans + 100, ans - 100]) };
+  }
+  const tenses = L <= 1 ? ["présent"] : ["présent", "futur", "imparfait"];
+  const tense = tenses[rnd(0, tenses.length - 1)];
+  const verbs = [...Object.keys(PRES), ...ER], verb = verbs[rnd(0, verbs.length - 1)], p = rnd(0, 5);
+  const f = forms(verb, tense), ans = f[p];
+  const subj = p === 0 && /^[aeiouéêhy]/i.test(ans) ? "J'" : PRON[p].charAt(0).toUpperCase() + PRON[p].slice(1);
+  const others = shuffle([...new Set(f.filter((x) => x !== ans))]).slice(0, 3);
+  return { q: `${subj}${subj.endsWith("'") ? "" : " "}… (${verb}, ${tense})`, ans, choices: shuffle([ans, ...others]) };
+};
+
 const SUFFIXES = ["class", "evaluations", "grades", "homework", "current_period", "overall_average", "averages", "server_status"];
 
 class StoryBonusCard extends HTMLElement {
@@ -109,7 +172,7 @@ class StoryBonusCard extends HTMLElement {
     };
   }
 
-  constructor() { super(); this.attachShadow({ mode: "open" }); this._sig = ""; this._confirm = false; this._sent = 0; this._chat = null; this._draft = ""; this._tab = null; this._mat = null; }
+  constructor() { super(); this.attachShadow({ mode: "open" }); this._sig = ""; this._confirm = false; this._sent = 0; this._chat = null; this._draft = ""; this._tab = null; this._mat = null; this._quiz = null; this._dtype = "melange"; }
 
   setConfig(config) {
     if (!config) throw new Error("Configuration invalide");
@@ -185,6 +248,76 @@ class StoryBonusCard extends HTMLElement {
     this._sent = Date.now(); this._render(); setTimeout(() => this._render(), 4200);
   }
 
+  _startQuiz() {
+    const c = this._config, n = Math.max(3, Math.min(30, Number(c.defi_questions) || 10));
+    const qs = []; const seen = new Set();
+    while (qs.length < n) { const q = makeQ(this._dtype, c.defi_level); if (!seen.has(q.q)) { seen.add(q.q); qs.push(q); } }
+    this._quiz = { qs, i: 0, good: 0, marks: [], picked: null, done: false, rewarded: null };
+    this._render();
+  }
+
+  _pick(v) {
+    const z = this._quiz; if (!z || z.picked !== null || z.done) return;
+    const ok = v === z.qs[z.i].ans;
+    z.picked = v; z.marks.push(ok); if (ok) z.good++;
+    this._render();
+    setTimeout(() => {
+      if (!this._quiz || this._quiz !== z) return;
+      z.picked = null; z.i++;
+      if (z.i >= z.qs.length) { z.done = true; this._finishQuiz(); }
+      this._render();
+    }, ok ? 900 : 1700);
+  }
+
+  _finishQuiz() {
+    const c = this._config, z = this._quiz, h = this._hass;
+    const pass = Math.min(Number(c.defi_pass) || 8, z.qs.length);
+    const ds = c.defi_daily && h.states[c.defi_daily], done = ds ? parseInt(ds.state, 10) || 0 : 0;
+    const max = Number(c.defi_daily_max) || 3;
+    if (z.good < pass) { z.rewarded = "fail"; return; }
+    if (c.defi_daily && done >= max) { z.rewarded = "max"; return; }
+    if (c.defi_script) {
+      h.callService("script", "turn_on", { entity_id: c.defi_script.includes(".") ? c.defi_script : "script." + c.defi_script,
+        variables: { score: z.good, total: z.qs.length, type: (DEFI_TYPES.find((x) => x[0] === this._dtype) || DEFI_TYPES[0])[1] } });
+      z.rewarded = "ok";
+    } else z.rewarded = "noscript";
+  }
+
+  _defiHtml(dark) {
+    const c = this._config, h = this._hass, z = this._quiz;
+    const pass = Math.min(Number(c.defi_pass) || 8, Number(c.defi_questions) || 10), tot = Number(c.defi_questions) || 10;
+    const ds = c.defi_daily && h.states[c.defi_daily], today = ds ? parseInt(ds.state, 10) || 0 : 0, max = Number(c.defi_daily_max) || 3;
+    const img = /^(\/|https?:\/\/)/.test(String(c.defi_image || "")) ? `<img src="${esc(c.defi_image)}" alt="">` : `<ha-icon icon="mdi:trophy-outline"></ha-icon>`;
+    if (!z) {
+      return `
+        <div class="hero dfi">
+          <div class="gav dfa">${img}</div>
+          <div class="ht"><div class="t">Défi du jour</div><small>Réussis <b>${pass}/${tot}</b> pour gagner une histoire bonus !</small>
+            ${c.defi_daily ? `<div class="daily">${Array.from({ length: max }, (_, i) => `<span class="${i < today ? "on" : ""}">★</span>`).join("")}<small>${today >= max ? "Bravo, tu as gagné toutes les histoires du jour !" : `Encore ${max - today} histoire${max - today > 1 ? "s" : ""} à gagner aujourd'hui`}</small></div>` : ""}</div>
+        </div>
+        <div class="mats">${DEFI_TYPES.map((x) => `<button class="mat dt ${x[0] === this._dtype ? "on" : ""}" data-dtype="${x[0]}"><ha-icon icon="${x[2]}"></ha-icon>${esc(x[1])}</button>`).join("")}</div>
+        <button class="go green" data-act="dstart"><ha-icon icon="mdi:flag-checkered"></ha-icon>Commencer le défi</button>`;
+    }
+    const dots = `<div class="dots">${z.qs.map((_, i) => `<span class="${i < z.marks.length ? (z.marks[i] ? "g" : "b") : i === z.i && !z.done ? "c" : ""}"></span>`).join("")}</div>`;
+    if (z.done) {
+      const msg = { ok: ["mdi:star-circle", "Bravo ! Tu gagnes une histoire bonus !", "g"], fail: ["mdi:refresh", `Presque ! Il fallait ${pass} bonnes réponses. Réessaie !`, "b"],
+        max: ["mdi:weather-night", "Super score ! Tu as déjà gagné toutes les histoires d'aujourd'hui, reviens demain.", "m"],
+        noscript: ["mdi:alert-outline", "Bravo ! (script de récompense non configuré)", "m"] }[z.rewarded] || ["mdi:check", "", "m"];
+      return `${dots}
+        <div class="res ${msg[2]}"><div class="sc">${z.good}<small>/${z.qs.length}</small></div><div class="rm"><ha-icon icon="${msg[0]}"></ha-icon>${esc(msg[1])}</div></div>
+        <div class="conf"><button class="go green" data-act="dstart"><ha-icon icon="mdi:replay"></ha-icon>Rejouer</button><button class="no" data-act="dback">Retour</button></div>`;
+    }
+    const q = z.qs[z.i];
+    return `${dots}
+      <div class="qz"><small>Question ${z.i + 1} / ${z.qs.length}</small><div class="qq">${esc(q.q)}</div></div>
+      <div class="ans">${q.choices.map((v) => {
+        let cl = "";
+        if (z.picked !== null) cl = v === q.ans ? "good" : v === z.picked ? "bad" : "dim";
+        return `<button class="an ${cl}" data-ans="${esc(v)}" ${z.picked !== null ? "disabled" : ""}>${esc(v)}</button>`;
+      }).join("")}</div>
+      ${z.picked !== null ? `<div class="fb ${z.picked === q.ans ? "g" : "b"}">${z.picked === q.ans ? "Bien joué !" : `La bonne réponse était ${esc(q.ans)}.`}</div>` : `<button class="end" data-act="dback">Abandonner</button>`}`;
+  }
+
   _curMat(weak) { return this._mat || (weak.length ? "faibles" : "maths"); }
 
   _launch(mode) {
@@ -256,8 +389,11 @@ class StoryBonusCard extends HTMLElement {
     const missing = !cs ? `<div class="warn"><ha-icon icon="mdi:alert-outline"></ha-icon>Compteur introuvable : ${esc(c.counter || "à choisir dans l'éditeur")}</div>` : "";
 
     const canKey = !!c.agent, canVoice = !!c.satellite;
-    const tab = c.revisions ? (this._tab || (c.default_tab === "revisions" ? "revisions" : "histoires")) : "histoires";
-    const rev = tab === "revisions";
+    const tabsOn = [["histoires", true], ["revisions", !!c.revisions], ["defis", !!c.defis]].filter((x) => x[1]).map((x) => x[0]);
+    let tab = this._tab || c.default_tab || "histoires"; if (!tabsOn.includes(tab)) tab = "histoires";
+    const rev = tab === "revisions", dfi = tab === "defis";
+    const reward = c.defis && !this._pre() ? "défi réussi" : esc(c.level);
+    const quizOn = dfi && this._quiz && !this._quiz.done;
     const weak = c.revisions ? this._weak() : [];
     const mat = this._curMat(weak);
     const revImgOk = /^(\/|https?:\/\/)/.test(String(c.revision_image || ""));
@@ -280,7 +416,7 @@ class StoryBonusCard extends HTMLElement {
     let btn;
     if (this._chat) btn = "";
     else if (sent) btn = `<button class="go sent" disabled><ha-icon icon="mdi:check-circle"></ha-icon>C'est parti, écoute la sphère !</button>`;
-    else if (n <= 0) btn = `<button class="go off" disabled><ha-icon icon="mdi:lock-outline"></ha-icon>Gagne un ${esc(c.level)} pour débloquer une histoire</button>`;
+    else if (n <= 0) btn = `<button class="go off" disabled><ha-icon icon="mdi:lock-outline"></ha-icon>${c.defis && !this._pre() ? "Réussis un défi pour débloquer une histoire" : "Gagne un " + esc(c.level) + " pour débloquer une histoire"}</button>`;
     else if (this._confirm) btn = `<div class="conf">${canVoice ? `<button class="go" data-act="voice"><ha-icon icon="mdi:speaker-wireless"></ha-icon>Sur la sphère</button>` : ""}${canKey ? `<button class="go" data-act="key"><ha-icon icon="mdi:keyboard-outline"></ha-icon>Au clavier</button>` : ""}<button class="no" data-act="no">Annuler</button></div>`;
     else btn = `<button class="go" data-act="go"><ha-icon icon="mdi:auto-fix"></ha-icon>Lancer une histoire bonus</button>`;
 
@@ -346,6 +482,27 @@ class StoryBonusCard extends HTMLElement {
         .win i.mid { background:#f0a020; } .win i.bad { background:#e0524f; }
         .okmsg { display:flex; align-items:center; gap:8px; font-size:.85em; color:var(--sb-ok); padding:.4em .2em; }
         .ends { display:flex; justify-content:center; gap:18px; }
+        .hero.dfi::before { background:radial-gradient(circle at 20% 50%, color-mix(in srgb,#3ddc84 22%,transparent), transparent 55%); }
+        .gav.dfa { border-color:#3ddc84; color:#3ddc84; background:color-mix(in srgb,#3ddc84 15%,transparent); }
+        .daily { display:flex; align-items:center; gap:3px; flex-wrap:wrap; margin-top:2px; } .daily span { color:var(--sb-fill); font-size:1.1em; text-shadow:0 0 0 var(--sb-muted); opacity:.5; }
+        .daily span.on { color:var(--sb-gold); opacity:1; } .daily small { margin-left:6px; }
+        .mat.dt.on { background:linear-gradient(135deg,#1fb56a,#3ddc84); }
+        .go.green { background:linear-gradient(135deg,#1fb56a,#3ddc84); color:#06311b; box-shadow:0 .3em 1em rgba(61,220,132,.3); }
+        .dots { display:flex; gap:5px; justify-content:center; }
+        .dots span { width:12px; height:12px; border-radius:50%; background:var(--sb-fill); border:1px solid var(--sb-glass-b); }
+        .dots span.g { background:#3ddc84; border-color:#3ddc84; } .dots span.b { background:#ff6b6b; border-color:#ff6b6b; } .dots span.c { border:2px solid var(--sb-gold); }
+        .qz { display:flex; flex-direction:column; align-items:center; gap:6px; padding:18px 12px; border-radius:18px; background:var(--sb-glass); border:1px solid var(--sb-glass-b); }
+        .qz small { color:var(--sb-muted); font-size:.78em; font-weight:650; }
+        .qq { font-size:1.9em; font-weight:850; text-align:center; letter-spacing:.01em; }
+        .ans { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .an { padding:.9em .5em; border-radius:16px; font-size:1.25em; font-weight:800; background:var(--sb-glass); border:2px solid var(--sb-glass-b); transition:transform .1s; }
+        .an:active { transform:scale(.97); }
+        .an.good { background:color-mix(in srgb,#3ddc84 28%,transparent); border-color:#3ddc84; } .an.bad { background:color-mix(in srgb,#ff6b6b 25%,transparent); border-color:#ff6b6b; }
+        .an.dim { opacity:.4; }
+        .fb { text-align:center; font-weight:750; font-size:.95em; } .fb.g { color:var(--sb-ok); } .fb.b { color:var(--sb-bad); }
+        .res { display:flex; align-items:center; gap:14px; padding:14px; border-radius:18px; background:var(--sb-glass); border:1px solid var(--sb-glass-b); }
+        .res .sc { font-size:2.6em; font-weight:900; line-height:1; } .res .sc small { font-size:.45em; color:var(--sb-muted); }
+        .res .rm { display:flex; gap:6px; align-items:center; font-weight:700; } .res.g .sc, .res.g .rm { color:var(--sb-ok); } .res.b .sc { color:var(--sb-bad); }
         .chat { display:flex; flex-direction:column; gap:8px; }
         .msgs { display:flex; flex-direction:column; gap:8px; max-height:420px; overflow-y:auto; padding:2px; scrollbar-width:thin; }
         .m { max-width:86%; padding:.6em .8em; border-radius:16px; font-size:.9em; line-height:1.4; white-space:pre-wrap; word-wrap:break-word; }
@@ -366,17 +523,20 @@ class StoryBonusCard extends HTMLElement {
       <ha-card class="${dark ? "dark" : "light"}" style="${gvStyle(c, dark)}">
         <div class="head">
           <div class="av">${imgOk ? `<img src="${esc(c.image)}" alt="">` : `<ha-icon icon="mdi:book-open-page-variant"></ha-icon>`}</div>
-          <div class="hn"><b>${rev ? "Révisions" : esc(c.title)}</b><small>${name ? esc(name) + " · " : ""}${rev ? "avec Sire Gaspard · " + esc(c.niveau) : "1 " + esc(c.level) + " = 1 histoire"}</small></div>
-          ${this._pre() && !rev ? `<span class="chip"><ha-icon icon="mdi:star-check"></ha-icon>${total} ${esc(c.level)}</span>` : ""}
+          <div class="hn"><b>${rev ? "Révisions" : dfi ? "Défis" : esc(c.title)}</b><small>${name ? esc(name) + " · " : ""}${rev ? "avec Sire Gaspard · " + esc(c.niveau) : dfi ? "niveau " + esc(c.defi_level) : "1 " + reward + " = 1 histoire"}</small></div>
+          ${this._pre() && !rev && !dfi ? `<span class="chip"><ha-icon icon="mdi:star-check"></ha-icon>${total} ${esc(c.level)}</span>` : ""}
         </div>
-        ${c.revisions && !this._chat ? `<div class="tabs"><button class="tab ${!rev ? "on" : ""}" data-tab="histoires"><ha-icon icon="mdi:star-shooting"></ha-icon>Histoires${n > 0 ? `<em>${n}</em>` : ""}</button><button class="tab ${rev ? "on" : ""}" data-tab="revisions"><ha-icon icon="mdi:sword"></ha-icon>Révisions${weak.length ? `<em class="w">${weak.length}</em>` : ""}</button></div>` : ""}
-        ${rev ? revHtml : `${missing}
+        ${tabsOn.length > 1 && !this._chat && !quizOn ? `<div class="tabs">${tabsOn.map((t) => t === "histoires"
+          ? `<button class="tab ${tab === t ? "on" : ""}" data-tab="histoires"><ha-icon icon="mdi:star-shooting"></ha-icon>Histoires${n > 0 ? `<em>${n}</em>` : ""}</button>`
+          : t === "revisions" ? `<button class="tab ${tab === t ? "on" : ""}" data-tab="revisions"><ha-icon icon="mdi:sword"></ha-icon>Révisions${weak.length ? `<em class="w">${weak.length}</em>` : ""}</button>`
+          : `<button class="tab ${tab === t ? "on" : ""}" data-tab="defis"><ha-icon icon="mdi:trophy-outline"></ha-icon>Défis</button>`).join("")}</div>` : ""}
+        ${rev ? revHtml : dfi ? this._defiHtml(dark) : `${missing}
         <div class="hero" ${this._chat ? 'style="display:none"' : ""}>
           <div class="big"><span class="s">★</span><b>${n}</b></div>
           <div class="ht">
             <div class="t">${n > 0 ? `<em>${n}</em> histoire${n > 1 ? "s" : ""} à raconter !` : "Pas d'histoire en réserve"}</div>
-            <div class="row">${stars || `<small>Chaque ${esc(c.level)} te fait gagner une étoile.</small>`}</div>
-            <small>${n > 0 ? "Tu inventes le héros, le monde et l'aventure." : "Prochaine histoire au prochain " + esc(c.level) + " !"}</small>
+            <div class="row">${stars || `<small>Chaque ${reward} te fait gagner une étoile.</small>`}</div>
+            <small>${n > 0 ? "Tu inventes le héros, le monde et l'aventure." : (c.defis && !this._pre() ? "Réussis un défi pour gagner une histoire !" : "Prochaine histoire au prochain " + esc(c.level) + " !")}</small>
           </div>
         </div>
         ${btn}
@@ -398,6 +558,10 @@ class StoryBonusCard extends HTMLElement {
     r.querySelectorAll("[data-mat]").forEach((b) => b.addEventListener("click", () => { this._mat = b.dataset.mat; this._render(); }));
     on('[data-act="rvoice"]', () => this._revise("voice"));
     on('[data-act="rkey"]', () => this._revise("clavier"));
+    r.querySelectorAll("[data-dtype]").forEach((b) => b.addEventListener("click", () => { this._dtype = b.dataset.dtype; this._render(); }));
+    r.querySelectorAll("[data-ans]").forEach((b) => b.addEventListener("click", () => this._pick(b.dataset.ans)));
+    on('[data-act="dstart"]', () => this._startQuiz());
+    on('[data-act="dback"]', () => { this._quiz = null; this._render(); });
     on('[data-act="fini"]', () => this._ask("j'ai fini"));
     on('[data-act="end"]', () => { this._chat = null; this._draft = ""; this._sig = ""; this._render(); });
     r.querySelectorAll("[data-choice]").forEach((b) => b.addEventListener("click", () => this._ask(b.dataset.choice)));
@@ -416,7 +580,9 @@ class StoryBonusCard extends HTMLElement {
 
 /* ---------- Éditeur visuel ---------- */
 const LABELS = { ...GV_LABELS,
-  counter: "Compteur d'histoires bonus", revisions: "Onglet Révisions (Sire Gaspard)", revision_script: "Script de révisions sur la sphère",
+  counter: "Compteur d'histoires bonus", defis: "Onglet Défis notés (récompense sans Pronote)", defi_script: "Script de récompense d'un défi réussi",
+  defi_daily: "Compteur des défis récompensés aujourd'hui", defi_level: "Niveau des défis", defi_daily_max: "Histoires gagnables par jour",
+  defi_questions: "Questions par défi", defi_pass: "Bonnes réponses pour réussir", defi_image: "Personnage des défis", revisions: "Onglet Révisions (Sire Gaspard)", revision_script: "Script de révisions sur la sphère",
   revision_image: "Image de Sire Gaspard", niveau: "Niveau scolaire", revision_days: "Points faibles Pronote sur (jours)", default_tab: "Onglet à l'ouverture", agent: "Conteur pour le mode clavier (agent de conversation)", age: "Âge de l'enfant", script: "Script qui lance l'histoire", satellite: "Sphère / satellite qui raconte",
   pronote: "Capteur Pronote de l'enfant (facultatif, pour les derniers A+)", name: "Prénom affiché", image: "Personnage ou photo (ex. /local/image/pixel.png)",
   title: "Titre", level: "Compétence qui rapporte une histoire", max_recent: "Derniers A+ affichés", confirm: "Demander une confirmation", theme: "Thème",
@@ -449,7 +615,17 @@ class StoryBonusCardEditor extends HTMLElement {
       { type: "grid", name: "", schema: [
         { name: "niveau", selector: { select: { mode: "dropdown", options: ["CP", "CE1", "CE2", "CM1", "CM2", "6e", "5e", "4e", "3e"] } } },
         { name: "revision_days", selector: { number: { min: 7, max: 120, mode: "box" } } }] },
-      { name: "default_tab", selector: { select: { mode: "dropdown", options: [{ value: "histoires", label: "Histoires" }, { value: "revisions", label: "Révisions" }] } } },
+      { name: "defis", selector: { boolean: {} } },
+      { name: "defi_script", selector: { entity: { domain: "script" } } },
+      { name: "defi_daily", selector: { entity: { domain: ["counter", "input_number", "sensor"] } } },
+      { type: "grid", name: "", schema: [
+        { name: "defi_level", selector: { select: { mode: "dropdown", options: ["CE1", "CE2", "CM1", "CM2"] } } },
+        { name: "defi_daily_max", selector: { number: { min: 1, max: 10, mode: "box" } } }] },
+      { type: "grid", name: "", schema: [
+        { name: "defi_questions", selector: { number: { min: 5, max: 30, mode: "box" } } },
+        { name: "defi_pass", selector: { number: { min: 1, max: 30, mode: "box" } } }] },
+      { name: "defi_image", selector: { text: {} } },
+      { name: "default_tab", selector: { select: { mode: "dropdown", options: [{ value: "histoires", label: "Histoires" }, { value: "revisions", label: "Révisions" }, { value: "defis", label: "Défis" }] } } },
       { name: "theme", selector: { select: { mode: "dropdown", options: [{ value: "auto", label: "Automatique (thème de Home Assistant)" }, { value: "light", label: "Clair" }, { value: "dark", label: "Sombre" }] } } },
       ...GV_FIELDS,
     ];
