@@ -93,6 +93,15 @@ defi_level: CE2
 | `defi_questions` / `defi_pass` | Nombre de questions (10) et bonnes réponses nécessaires (8) |
 | `defi_image` | Personnage affiché sur l'onglet |
 
+## Livre d'histoires
+Avec `book` (une liste de tâches de l'intégration **Liste de tâches locale**, ex. `todo.livre_de_logan`), un bouton **Ranger dans mon livre** apparaît à la fin d'une histoire au clavier : le conteur lui donne un titre et l'histoire est enregistrée (date + texte complet, réponses de l'enfant comprises). L'onglet **Livre** liste les histoires et permet de les relire.
+
+![Livre](apercu-livre.png)
+
+| Option | Description |
+|---|---|
+| `book` | Liste de tâches qui sert de livre d'histoires |
+
 ## Mode clavier
 Avec `agent` renseigné, le bouton propose **Sur la sphère** ou **Au clavier**. Au clavier, l'histoire se joue dans la carte comme une discussion : le conteur pose ses 3 questions, raconte, et propose des choix numérotés (boutons « Choix 1, 2, 3 » ou réponse libre). Le script est appelé avec `clavier: true` pour décompter l'histoire sans rien lancer sur la sphère.
 
