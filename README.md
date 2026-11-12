@@ -24,11 +24,11 @@ HACS → ⋮ → Dépôts personnalisés → URL de ce dépôt, catégorie **Tab
 ```yaml
 type: custom:story-bonus-card
 counter: counter.logan_histoires_bonus
-script: script.logan_histoire_bonus
+script: script.logan_lancer_une_histoire_bonus
 satellite: assist_satellite.sphere_logan_assist_satellite
 agent: conversation.prof_6e                # mode clavier
 age: 11
-revision_script: script.logan_revisions
+revision_script: script.logan_revisions_avec_sire_gaspard
 niveau: 6e
 pronote: sensor.pronote_nom_prenom_class   # facultatif
 name: Logan

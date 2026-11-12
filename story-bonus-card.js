@@ -8,7 +8,7 @@
  * Style verre, thème clair/sombre automatique, éditeur visuel, textes en français.
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.0.1";
 
 /* === NUANCE COMMUNE v2 (cartes Johan854) ===
  * Bloc identique dans toutes les cartes. Options : nuance, nuance_perso, intensite.
@@ -180,8 +180,8 @@ class StoryBonusCard extends HTMLElement {
       this._ask(REV_PROMPT(c.name, c.niveau, m[1], weakTxt), true);
       return;
     }
-    const service = c.revision_script.includes(".") ? c.revision_script.split(".")[1] : c.revision_script;
-    this._hass.callService("script", service, { satellite: c.satellite, matiere: m[1] });
+    const ent = c.revision_script.includes(".") ? c.revision_script : "script." + c.revision_script;
+    this._hass.callService("script", "turn_on", { entity_id: ent, variables: { satellite: c.satellite, matiere: m[1] } });
     this._sent = Date.now(); this._render(); setTimeout(() => this._render(), 4200);
   }
 
@@ -190,17 +190,18 @@ class StoryBonusCard extends HTMLElement {
   _launch(mode) {
     const c = this._config;
     if (!c.script || !this._hass) return;
-    const service = c.script.includes(".") ? c.script.split(".")[1] : c.script;
+    // script.turn_on fonctionne quel que soit l'identifiant de l'entité
+    const run = (variables) => this._hass.callService("script", "turn_on", { entity_id: c.script.includes(".") ? c.script : "script." + c.script, variables });
     if (mode === "clavier") {
       // Le script décompte l'histoire sans rien lancer sur la sphère
-      this._hass.callService("script", service, { clavier: true });
+      run({ clavier: true });
       this._confirm = false;
       this._chat = { id: null, msgs: [], busy: false, mode: "story" };
       this._render();
       this._ask(STORY_PROMPT(c.name, Number(c.age) || 11), true);
       return;
     }
-    this._hass.callService("script", service, c.satellite ? { satellite: c.satellite } : {});
+    run(c.satellite ? { satellite: c.satellite } : {});
     this._confirm = false; this._sent = Date.now(); this._render();
     setTimeout(() => this._render(), 4200);
   }
