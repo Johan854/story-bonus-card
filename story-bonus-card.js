@@ -8,7 +8,7 @@
  * Style verre, thème clair/sombre automatique, éditeur visuel, textes en français.
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 /* === NUANCE COMMUNE v2 (cartes Johan854) ===
  * Bloc identique dans toutes les cartes. Options : nuance, nuance_perso, intensite.
@@ -344,15 +344,26 @@ class StoryBonusCard extends HTMLElement {
     const ch = this._chat, c = this._config;
     if (!ch || ch.busy || !text.trim()) return;
     if (!hidden) ch.msgs.push({ me: true, t: text.trim() });
+    ch.msgs = ch.msgs.filter((m) => !m.retry);           // on retire l'ancien message de repli
+    ch.last = { text, hidden: true };                    // pour le bouton « Réessayer »
     ch.busy = true; this._draft = ""; this._render();
-    try {
-      const r = await this._hass.callWS({ type: "conversation/process", text, agent_id: c.agent, conversation_id: ch.id || undefined, language: "fr" });
-      ch.id = r.conversation_id || ch.id;
-      const sp = r.response && r.response.speech && r.response.speech.plain && r.response.speech.plain.speech;
-      ch.msgs.push({ me: false, t: sp || "…" });
-    } catch (e) {
-      ch.msgs.push({ me: false, err: true, t: "Oups, je n'arrive pas à joindre le conteur (" + ((e && e.message) || e) + ")." });
+    // Le conteur (Gemini) peut être saturé quelques secondes : on réessaie tout seul avant d'abandonner
+    const waits = [0, 3000, 7000];
+    let sp = null;
+    for (const w of waits) {
+      if (w) await new Promise((res) => setTimeout(res, w));
+      if (this._chat !== ch) return;                     // histoire fermée entre-temps
+      try {
+        const r = await this._hass.callWS({ type: "conversation/process", text, agent_id: c.agent, conversation_id: ch.id || undefined, language: "fr" });
+        const resp = r && r.response;
+        const txt = resp && resp.speech && resp.speech.plain && resp.speech.plain.speech;
+        if (resp && resp.response_type !== "error" && txt) { ch.id = r.conversation_id || ch.id; sp = txt; break; }
+        if (r && r.conversation_id) ch.id = r.conversation_id;
+      } catch (e) { /* nouvel essai */ }
     }
+    if (this._chat !== ch) return;
+    if (sp) ch.msgs.push({ me: false, t: sp });
+    else ch.msgs.push({ me: false, err: true, retry: true, t: "Le conteur fait une petite pause, il reprend son souffle… Appuie sur « Réessayer » dans un instant, ton histoire t'attend !" });
     ch.busy = false; this._render();
   }
 
@@ -416,8 +427,9 @@ class StoryBonusCard extends HTMLElement {
 
   _chatHtml() {
     const ch = this._chat;
-    const msgs = ch.msgs.map((m) => `<div class="m ${m.me ? "me" : "ai"} ${m.err ? "err" : ""}">${esc(m.t)}</div>`).join("");
-    const last = [...ch.msgs].reverse().find((m) => !m.me);
+    const msgs = ch.msgs.map((m) => `<div class="m ${m.me ? "me" : "ai"} ${m.err ? "err" : ""}">${esc(m.t)}</div>`).join("")
+      + (!ch.busy && ch.msgs.length && ch.msgs[ch.msgs.length - 1].retry ? `<button class="end retry" data-act="retry"><ha-icon icon="mdi:refresh"></ha-icon>Réessayer</button>` : "");
+    const last = [...ch.msgs].reverse().find((m) => !m.me && !m.err);
     // Choix numérotés proposés par le conteur → boutons rapides
     const nums = last && !ch.busy ? [...String(last.t).matchAll(/(?:^|\n)\s*([1-3])[.)]\s*/g)].map((x) => x[1]) : [];
     const chips = nums.length >= 2 ? `<div class="chips2">${[...new Set(nums)].map((n) => `<button data-choice="${n}">Choix ${n}</button>`).join("")}</div>` : "";
@@ -579,6 +591,8 @@ class StoryBonusCard extends HTMLElement {
         .m.ai { align-self:flex-start; background:var(--sb-glass); border:1px solid var(--sb-glass-b); border-bottom-left-radius:5px; }
         .m.me { align-self:flex-end; background:linear-gradient(135deg, var(--sb-gold), color-mix(in srgb,var(--sb-gold) 70%,#ff8a3d)); color:#3a2600; border-bottom-right-radius:5px; font-weight:600; }
         .m.err { color:var(--sb-bad); }
+        .m.err.ai { color:inherit; font-style:italic; opacity:.85; }
+        .retry { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; }
         .typing { align-self:flex-start; display:flex; gap:4px; padding:.7em .9em; border-radius:16px; background:var(--sb-glass); border:1px solid var(--sb-glass-b); }
         .typing span { width:7px; height:7px; border-radius:50%; background:var(--sb-gold); animation:tw 1s infinite; } .typing span:nth-child(2) { animation-delay:.2s; } .typing span:nth-child(3) { animation-delay:.4s; }
         .inp { display:flex; gap:8px; }
@@ -637,6 +651,7 @@ class StoryBonusCard extends HTMLElement {
     r.querySelectorAll("[data-read]").forEach((b) => b.addEventListener("click", () => { this._read = b.dataset.read; this._render(); }));
     on('[data-act="dback"]', () => { this._quiz = null; this._render(); });
     on('[data-act="fini"]', () => this._ask("j'ai fini"));
+    on('[data-act="retry"]', () => { const l = this._chat && this._chat.last; if (l) this._ask(l.text, true); });
     on('[data-act="end"]', () => { this._chat = null; this._draft = ""; this._sig = ""; this._render(); });
     r.querySelectorAll("[data-choice]").forEach((b) => b.addEventListener("click", () => this._ask(b.dataset.choice)));
     const inp = r.querySelector(".inp input");
